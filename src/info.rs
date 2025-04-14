@@ -7,7 +7,11 @@ use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
 use scraper::{Html, Selector};
 use serde_json::json;
-use std::{borrow::{Borrow, Cow}, path::Path, time::Duration};
+use std::{
+    borrow::{Borrow, Cow},
+    path::Path,
+    time::Duration,
+};
 use url::Url;
 
 #[cfg(feature = "live")]
@@ -23,8 +27,13 @@ use crate::{
         CustomRetryableStrategy, PlayerResponse, VideoError, VideoInfo, VideoOptions, YTConfig,
     },
     utils::{
-        between, choose_format, clean_video_details, get_functions, get_html, get_html5player, get_random_v6_ip, get_video_id, get_visitor_data, get_ytconfig, is_age_restricted_from_html, is_live, is_not_yet_broadcasted, is_play_error, is_player_response_error, is_private_video, is_rental, parse_live_video_formats, parse_video_formats, sort_formats
+        between, choose_format, clean_video_details, get_functions, get_html, get_html5player,
+        get_random_v6_ip, get_video_id, get_visitor_data, get_ytconfig,
+        is_age_restricted_from_html, is_live, is_not_yet_broadcasted, is_play_error,
+        is_player_response_error, is_private_video, is_rental, parse_live_video_formats,
+        parse_video_formats, sort_formats,
     },
+    VideoFormat,
 };
 
 #[derive(Clone, derive_more::Display, derivative::Derivative)]
@@ -191,7 +200,7 @@ impl<'opts> Video<'opts> {
                 .get_player_ytconfig(
                     &response,
                     INNERTUBE_CLIENT.get("ios").cloned().unwrap_or_default(),
-                    self.options.request_options.po_token.as_ref()
+                    self.options.request_options.po_token.as_ref(),
                 )
                 .await?;
 
@@ -209,7 +218,7 @@ impl<'opts> Video<'opts> {
                         .get("tv_embedded")
                         .cloned()
                         .unwrap_or_default(),
-                    self.options.request_options.po_token.as_ref()
+                    self.options.request_options.po_token.as_ref(),
                 )
                 .await?;
 
@@ -296,8 +305,7 @@ impl<'opts> Video<'opts> {
         let client = &self.client;
 
         let info = self.get_info().await?;
-        let format = choose_format(&info.formats, &self.options)
-            .map_err(|_op| VideoError::VideoSourceNotFound)?;
+        let format = self.choose_format(&info.formats)?;
 
         let link = format.url;
 
@@ -504,6 +512,13 @@ impl<'opts> Video<'opts> {
         self.video_id.clone()
     }
 
+    pub fn choose_format(&self, formats: &[VideoFormat]) -> Result<VideoFormat, VideoError> {
+        let format =
+            choose_format(formats, &self.options).map_err(|_op| VideoError::VideoSourceNotFound)?;
+
+        Ok(format)
+    }
+
     // Necessary to blocking api
     #[allow(dead_code)]
     pub(crate) fn get_client(&self) -> &reqwest_middleware::ClientWithMiddleware {
@@ -552,7 +567,7 @@ impl<'opts> Video<'opts> {
                 .expect("Declared as object above")
                 .insert(
                     "serviceIntegrityDimensions".to_string(),
-                    json!({"poToken": po_token})
+                    json!({"poToken": po_token}),
                 );
         }
 
@@ -579,7 +594,7 @@ impl<'opts> Video<'opts> {
         );
         headers.insert(
             HeaderName::from_str("X-Goog-Visitor-Id").unwrap(),
-            HeaderValue::from_str(&visitor_data).unwrap()
+            HeaderValue::from_str(&visitor_data).unwrap(),
         );
 
         let response = self
