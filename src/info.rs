@@ -302,74 +302,10 @@ impl<'opts> Video<'opts> {
     ///     }
     /// ```
     pub async fn stream(&self) -> Result<Box<dyn Stream + Send + Sync>, VideoError> {
-        let client = &self.client;
-
         let info = self.get_info().await?;
         let format = self.choose_format(&info.formats)?;
 
-        let link = format.url;
-
-        if link.is_empty() {
-            return Err(VideoError::VideoSourceNotFound);
-        }
-
-        // Only check for HLS formats for live streams
-        if format.is_hls {
-            #[cfg(feature = "live")]
-            {
-                let stream = LiveStream::new(LiveStreamOptions {
-                    client: Some(client.clone()),
-                    stream_url: link,
-                })?;
-
-                return Ok(Box::new(stream));
-            }
-            #[cfg(not(feature = "live"))]
-            {
-                return Err(VideoError::LiveStreamNotSupported);
-            }
-        }
-
-        let dl_chunk_size = self
-            .options
-            .download_options
-            .dl_chunk_size
-            .unwrap_or(DEFAULT_DL_CHUNK_SIZE);
-
-        let start = 0;
-        let end = start + dl_chunk_size;
-
-        let mut content_length = format
-            .content_length
-            .unwrap_or("0".to_string())
-            .parse::<u64>()
-            .unwrap_or(0);
-
-        // Get content length from source url if content_length is 0
-        if content_length == 0 {
-            let content_length_response = client
-                .get(&link)
-                .send()
-                .await
-                .map_err(VideoError::ReqwestMiddleware)?
-                .content_length()
-                .ok_or(VideoError::VideoNotFound)?;
-
-            content_length = content_length_response;
-        }
-
-        let stream = NonLiveStream::new(NonLiveStreamOptions {
-            client: Some(client.clone()),
-            link,
-            content_length,
-            dl_chunk_size,
-            start,
-            end,
-            #[cfg(feature = "ffmpeg")]
-            ffmpeg_args: None,
-        })?;
-
-        Ok(Box::new(stream))
+        format.stream(&self.client, &self.options).await
     }
 
     #[cfg(feature = "ffmpeg")]
@@ -467,18 +403,10 @@ impl<'opts> Video<'opts> {
 
     /// Download video directly to the file
     pub async fn download<P: AsRef<Path>>(&self, path: P) -> Result<(), VideoError> {
-        use std::{fs::File, io::Write};
+        let info = self.get_info().await?;
+        let format = self.choose_format(&info.formats)?;
 
-        let stream = self.stream().await?;
-
-        let mut file = File::create(path).map_err(|e| VideoError::DownloadError(e.to_string()))?;
-
-        while let Some(chunk) = stream.chunk().await? {
-            file.write_all(&chunk)
-                .map_err(|e| VideoError::DownloadError(e.to_string()))?;
-        }
-
-        Ok(())
+        format.download(&self.client, &self.options, path).await
     }
 
     #[cfg(feature = "ffmpeg")]
@@ -519,15 +447,11 @@ impl<'opts> Video<'opts> {
         Ok(format)
     }
 
-    // Necessary to blocking api
-    #[allow(dead_code)]
-    pub(crate) fn get_client(&self) -> &reqwest_middleware::ClientWithMiddleware {
+    pub fn get_client(&self) -> &reqwest_middleware::ClientWithMiddleware {
         &self.client
     }
 
-    // Necessary to blocking api
-    #[allow(dead_code)]
-    pub(crate) fn get_options(&self) -> &VideoOptions {
+    pub fn get_options(&self) -> &VideoOptions {
         &self.options
     }
 

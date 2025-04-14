@@ -1,4 +1,5 @@
 use mime::Mime;
+use reqwest_middleware::ClientWithMiddleware;
 use serde::{
     de::{Error, Unexpected},
     Deserialize, Deserializer, Serialize, Serializer,
@@ -8,8 +9,16 @@ use std::{
     cmp::Ordering,
     fmt::{Debug, Formatter, Result as fmtResult},
     ops::{Bound, RangeBounds},
+    path::Path,
     str::FromStr,
     sync::Arc,
+};
+
+#[cfg(feature = "live")]
+use crate::stream::{LiveStream, LiveStreamOptions};
+use crate::{
+    constants::DEFAULT_DL_CHUNK_SIZE,
+    stream::{NonLiveStream, NonLiveStreamOptions, Stream},
 };
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -385,6 +394,98 @@ pub struct VideoFormat {
     /// Video format is DashMPD or not
     #[serde(rename = "isDashMPD")]
     pub is_dash_mpd: bool,
+}
+
+impl VideoFormat {
+    pub async fn stream(
+        &self,
+        client: &ClientWithMiddleware,
+        options: &VideoOptions,
+    ) -> Result<Box<dyn Stream + Send + Sync>, VideoError> {
+        let link = self.url.clone();
+        if link.is_empty() {
+            return Err(VideoError::VideoSourceNotFound);
+        }
+
+        if self.is_hls {
+            #[cfg(feature = "live")]
+            {
+                let stream = LiveStream::new(LiveStreamOptions {
+                    client: Some(client.clone()),
+                    stream_url: link,
+                })?;
+
+                return Ok(Box::new(stream));
+            }
+            #[cfg(not(feature = "live"))]
+            {
+                return Err(VideoError::LiveStreamNotSupported);
+            }
+        }
+
+        let dl_chunk_size = options
+            .download_options
+            .dl_chunk_size
+            .unwrap_or(DEFAULT_DL_CHUNK_SIZE);
+
+        let start = 0;
+        let end = start + dl_chunk_size;
+
+        let mut content_length = self
+            .content_length
+            .as_ref()
+            .and_then(|x| x.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        // Get content length from source url if content_length is 0
+        if content_length == 0 {
+            let content_length_response = client
+                .get(&link)
+                .send()
+                .await
+                .map_err(VideoError::ReqwestMiddleware)?
+                .content_length()
+                .ok_or(VideoError::VideoNotFound)?;
+
+            content_length = content_length_response;
+        }
+
+        let stream = NonLiveStream::new(NonLiveStreamOptions {
+            client: Some(client.clone()),
+            link,
+            content_length,
+            dl_chunk_size,
+            start,
+            end,
+            #[cfg(feature = "ffmpeg")]
+            ffmpeg_args: None,
+        })?;
+
+        Ok(Box::new(stream))
+    }
+
+    pub async fn download<P: AsRef<Path>>(
+        &self,
+        client: &ClientWithMiddleware,
+        options: &VideoOptions,
+        path: P,
+    ) -> Result<(), VideoError> {
+        use std::{fs::File, io::Write};
+
+        let stream = self.stream(client, options).await?;
+
+        let mut file = File::create(path).map_err(|e| VideoError::DownloadError(e.to_string()))?;
+
+        while let Some(chunk) = stream.chunk().await? {
+            file.write_all(&chunk)
+                .map_err(|e| VideoError::DownloadError(e.to_string()))?;
+        }
+
+        file.flush()
+            .map_err(|e| VideoError::DownloadError(e.to_string()))?;
+
+        Ok(())
+    }
 }
 
 impl From<StreamingDataFormat> for VideoFormat {
