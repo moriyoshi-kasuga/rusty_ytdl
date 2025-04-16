@@ -400,7 +400,7 @@ impl VideoFormat {
     pub async fn stream(
         &self,
         client: &ClientWithMiddleware,
-        options: &VideoOptions,
+        options: &DownloadOptions,
     ) -> Result<Box<dyn Stream + Send + Sync>, VideoError> {
         let link = self.url.clone();
         if link.is_empty() {
@@ -423,10 +423,7 @@ impl VideoFormat {
             }
         }
 
-        let dl_chunk_size = options
-            .download_options
-            .dl_chunk_size
-            .unwrap_or(DEFAULT_DL_CHUNK_SIZE);
+        let dl_chunk_size = options.dl_chunk_size.unwrap_or(DEFAULT_DL_CHUNK_SIZE);
 
         let start = 0;
         let end = start + dl_chunk_size;
@@ -467,7 +464,7 @@ impl VideoFormat {
     pub async fn download<P: AsRef<Path>>(
         &self,
         client: &ClientWithMiddleware,
-        options: &VideoOptions,
+        options: &DownloadOptions,
         path: P,
     ) -> Result<(), VideoError> {
         use std::{fs::File, io::Write};

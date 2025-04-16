@@ -305,7 +305,7 @@ impl<'opts> Video<'opts> {
         let info = self.get_info().await?;
         let format = self.choose_format(&info.formats)?;
 
-        format.stream(&self.client, &self.options).await
+        format.stream(&self.client, &self.options.download_options).await
     }
 
     #[cfg(feature = "ffmpeg")]
@@ -406,7 +406,7 @@ impl<'opts> Video<'opts> {
         let info = self.get_info().await?;
         let format = self.choose_format(&info.formats)?;
 
-        format.download(&self.client, &self.options, path).await
+        format.download(&self.client, &self.options.download_options, path).await
     }
 
     #[cfg(feature = "ffmpeg")]
